@@ -1,0 +1,358 @@
+<html>
+	<head>
+	</head>
+	<body>
+		<script>
+		window.URL = window.URL || window.webkitURL;
+
+		navigator.getUserMedia  = navigator.getUserMedia || 
+								  navigator.webkitGetUserMedia ||
+								  navigator.mozGetUserMedia || 
+								  navigator.msGetUserMedia;
+
+		window.requestAnimationFrame = window.requestAnimationFrame ||
+									   window.webkitRequestAnimationFrame ||
+									   window.mozRequestAnimationFrame ||
+									   window.msRequestAnimationFrame ||
+									   window.oRequestAnimationFrame;
+		var GLOBAL_canvas;
+		var GLOBAL_mouseindex = 0;
+		(function () {
+		  var self = this;
+		  
+		  this.streamContainer = document.createElement('div');
+		  this.video = document.createElement('video');
+		  this.canvas = document.createElement('canvas');
+		  this.context = this.canvas.getContext('2d');
+		  this.canvas_orj = document.createElement('canvas');
+		  this.context_orj = this.canvas_orj.getContext('2d');
+		  
+          this.canvas.onmousedown = function(e){
+            GLOBAL_mouseindex = 200 - (e.x - 8) + (e.y - 8) * 200;
+            console.log(e.x + '-' + e.y);
+          }
+          
+		  GLOBAL_canvas = this.canvas;
+		  
+		  this.canvas.setAttribute('width', 200);
+		  this.canvas.setAttribute('height', 150);
+		  this.canvas.setAttribute('style', 'transform:rotateY(180deg)');
+		  
+		  this.canvas_orj.setAttribute('width', 200);
+		  this.canvas_orj.setAttribute('height', 150);
+		  this.canvas_orj.setAttribute('style', 'transform:rotateY(180deg)');
+		  
+		  
+		  this.video.setAttribute('autoplay', '1');
+		  this.video.setAttribute('width', 200);
+		  this.video.setAttribute('height', 150);
+		  this.video.setAttribute('style', 'display:none');
+
+		  streamContainer.appendChild(this.video);
+		  streamContainer.appendChild(this.canvas);
+		  streamContainer.appendChild(this.canvas_orj);
+		  document.body.appendChild(streamContainer);
+
+		  navigator.getUserMedia({video: true}, function(stream) {
+			self.video.src = window.URL.createObjectURL(stream);
+			self.video.play();
+			self.update();
+		  }, function(err){
+			throw err;
+		  });
+
+		  this.update = function() {
+			var self = this;
+			var last = Date.now();
+			var image;
+            var loop = function() {
+			  //var dt = Date.now - last;
+			  self.context.drawImage(self.video, 0, 0, 200, 150);
+			  self.context_orj.drawImage(self.video, 0, 0, 200, 150);
+			  image = self.context.getImageData(0, 0, 200, 150);
+			  image = brainLoop(image);
+			  self.context.putImageData(image, 0, 0);
+              
+			  //last = Date.now();
+			  setTimeout(loop, 1);
+			  //requestAnimationFrame(loop); 
+			};
+			requestAnimationFrame(loop);
+		  } 
+		})();
+		</script>
+		
+		<script>
+			var GLOBAL_loop_speed = 1;
+			
+            //Brain sınıfı
+            var Brain = function(){
+                var THIS = this;
+                this.neurons = new Array();
+                this.max_axon_terminal_load = 0;
+                this.callback;
+                
+                this.nextstep = function(){
+                    THIS.max_axon_terminal_load = THIS.max_axon_terminal_load * 0.999; // güzel görselleştirme için
+                    
+                    // axon load halfing
+                    for(var i = 0; i < THIS.neurons.length; i++){
+                        neuron = THIS.neurons[i];
+                        neuron.axon_terminal_load *= neuron.axon_terminal_load_halflife;
+                    }
+                    
+                    //update axons
+                    for(var i = 0; i < THIS.neurons.length; i++){
+                        neuron = THIS.neurons[i];
+                                                      
+                        var NeuroTransmitt = neuron.axon_load & 1;
+                        neuron.axon_load = neuron.axon_load >> 1;
+
+                        if(NeuroTransmitt == 1){
+                            neuron.axon_terminal_load += neuron.synapses_impact_load;
+                            
+                            for(var j = 0; j < neuron.synapses.length; j++){
+                                neuron.synapses[j].dendrite_load += neuron.axon_terminal_load; 
+                                neuron.synapses[j].thresholdCalculate();
+                            }
+                        }
+                    }
+                    
+                    if(this.callback) this.callback();
+                    
+                    // create impulse
+                    for(var i = 0; i < THIS.neurons.length; i++){
+                        neuron = THIS.neurons[i];
+                                            
+                        if(neuron.dendrite_load > neuron.threshold ) //&& neuron.dendrite_load > neuron.decrement_on_impulse) //(neuron.threshold * neuron.decrement_on_impulse/1000))
+                        {
+                            neuron.axon_load |= neuron.axon_impulse_bit; 
+                            neuron.dendrite_load *= neuron.decrement_ratio_on_impulse; 
+                            neuron.dendrite_load -= neuron.decrement_on_impulse; //(neuron.threshold * neuron.decrement_on_impulse/1000); 
+                            // neuron.dendrite_load = (neuron.dendrite_load < 0 ? 0 : neuron.dendrite_load); 
+                            neuron.thresholdCalculate();
+                        } else{
+                        }
+                    }
+                    
+                    // calculate max axon_terminal_load
+                    var k = 1/100;
+                    for(var i = 0; i < THIS.neurons.length; i++){
+                        neuron = THIS.neurons[i];
+                        if (THIS.max_axon_terminal_load < neuron.axon_terminal_load)
+                            THIS.max_axon_terminal_load = ((1-k) * THIS.max_axon_terminal_load  +  k * neuron.axon_terminal_load);
+                    }
+                    
+                    //dendrite load halfing
+                    for(var i = 0; i < THIS.neurons.length; i++){
+                        neuron = THIS.neurons[i];
+                        neuron.dendrite_load *= neuron.dendrite_load_halflife; 
+                        neuron.thresholdCalculate();
+                    }
+                }
+            }
+            
+			//Neuron sınıfı
+			var Neuron = function(){
+				this.dendrites = new Array(); // Bu hücreye bağlanan nöronlar (alıcı)
+				this.synapses = new Array(); // Bu hücrenin bağlı olduğu nöronlar / Akson ucu (verici)
+				
+                this.axon_length = 20; //Math.floor(15 * Math.random()) + 5; // Akson uzunluğu , 10 bitlik sayı
+				this.axon_impulse_bit = 1 << (this.axon_length-1);
+				
+                this.dendrite_load = 0; //1000 * Math.random(); // Dendritteki kimyasal miktarı 
+				this.threshold = 10; //* Math.random(); // Eşik seviyesi
+				this.axon_load = 0;
+				this.axon_terminal_load = 0;
+
+                
+                this.dendrite_load_halflife = 50; // Dendritteki kimyasal miktarın kaç döngüde bir yarıya ineceğinin miktarı 
+				this.dendrite_load_halflife = 1 / Math.pow(2, 1/this.dendrite_load_halflife);
+				
+                this.threshold_load_halflife = 10000;
+                this.threshold_load_halflife = 1 / Math.pow(2, 1/this.threshold_load_halflife);
+				
+				this.axon_terminal_load_halflife = 50;
+                this.axon_terminal_load_halflife = 1 / Math.pow(2, 1/this.axon_terminal_load_halflife);
+				
+                
+                this.synapses_impact_load = 1; // Sinapstaki kimyasal miktarı  
+				this.decrement_on_impulse = 8; // Impulse anındaki boşaltılan yük miktarı
+				this.decrement_ratio_on_impulse = 0.8; // Impulse anındaki boşaltılan yük miktarı
+				
+				this.thresholdCalculate = function(){
+                    k = 1/100;
+					if(this.threshold <= this.dendrite_load) 
+						this.threshold = ((1-k) * this.threshold  +  k * this.dendrite_load);
+					else 
+                        this.threshold *= this.threshold_load_halflife;
+				}
+			}
+			
+			var NeuronsNumberx = GLOBAL_canvas.width;
+			var NeuronsNumbery = GLOBAL_canvas.height;
+			var NeuronsNumber  = NeuronsNumberx * NeuronsNumbery;
+			var brain = new Brain();
+			var brain2 = new Brain();
+			var brain3 = new Brain();
+			
+			for(var i=0; i < NeuronsNumber; i++){
+				n1 = new Neuron();
+                n2 = new Neuron();
+                n3 = new Neuron();
+                //n1.synapses.push(n2);
+                brain.neurons.push(n1);
+				brain2.neurons.push(n2);
+				brain3.neurons.push(n3);
+			}
+			
+			for(var i = 1; i < NeuronsNumberx - 1; i++){
+				for(var j = 1; j < NeuronsNumbery - 1; j++){
+                    //brain.neurons[Math.floor(NeuronsNumber * Math.random())].synapses.push(brain.neurons[i + j * NeuronsNumberx]);
+					//for(var k = 0; k < 2; k++)
+					//	if(i < NeuronsNumberx /2)
+                    //   {
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i-1) + (j-1) * NeuronsNumberx]);
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i  ) + (j-1) * NeuronsNumberx]);
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i+1) + (j-1) * NeuronsNumberx]);
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i-1) + (j  ) * NeuronsNumberx]);
+						// brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain2.neurons[i + j * NeuronsNumberx].synapses.push(brain2.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain2.neurons[i + j * NeuronsNumberx].synapses.push(brain2.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain2.neurons[i + j * NeuronsNumberx].synapses.push(brain2.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain3.neurons[i + j * NeuronsNumberx].synapses.push(brain3.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain3.neurons[i + j * NeuronsNumberx].synapses.push(brain3.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						// brain3.neurons[i + j * NeuronsNumberx].synapses.push(brain3.neurons[(i  ) + (j  ) * NeuronsNumberx]);
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i+1) + (j  ) * NeuronsNumberx]);
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i-1) + (j+1) * NeuronsNumberx]);
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i  ) + (j+1) * NeuronsNumberx]);
+						//brain.neurons[i + j * NeuronsNumberx].synapses.push(brain.neurons[(i+1) + (j+1) * NeuronsNumberx]);
+                    //   }
+				}
+			}
+            
+			function brainLoop(image){
+                
+                for(var i = 0; i < brain.neurons.length; i++){
+                    //brain.neurons[i].dendrite_load += (image.data[i*4+0] + image.data[i*4+1] + image.data[i*4+2] ) / 3 / 255;
+                    brain.neurons[i].dendrite_load += (image.data[i*4+0]) / 255;
+                    brain.neurons[i].thresholdCalculate();
+                }
+            
+                brain.nextstep();
+
+                for(var i = 0; i < brain2.neurons.length; i++){
+                    brain2.neurons[i].dendrite_load += (image.data[i*4+1]) / 255;
+                    brain2.neurons[i].thresholdCalculate();
+                }
+                
+                brain2.nextstep();
+
+                for(var i = 0; i < brain2.neurons.length; i++){
+                    brain3.neurons[i].dendrite_load += (image.data[i*4+2]) / 255;
+                    brain3.neurons[i].thresholdCalculate();
+                }
+                
+                brain3.nextstep();
+
+                //
+                for(var i = 0; i < brain.neurons.length; i++){
+                    //var load = brain.neurons[i].axon_terminal_load / brain.max_axon_terminal_load;
+                    var loadR = brain.neurons[i].axon_terminal_load / brain.max_axon_terminal_load;
+                    var loadG = brain2.neurons[i].axon_terminal_load / brain2.max_axon_terminal_load;
+                    var loadB = brain3.neurons[i].axon_terminal_load / brain3.max_axon_terminal_load;
+                    image.data[i*4+0] = loadR * 255;
+                    image.data[i*4+1] = loadG * 255;
+                    image.data[i*4+2] = loadB * 255;
+                    image.data[i*4+3] = 255;
+                    
+                    if(i == GLOBAL_mouseindex){
+                        image.data[i*4+0] = 255;
+                        image.data[i*4+1] = 0; 
+                        image.data[i*4+2] = 0;
+                    }
+                }
+                
+                return image;
+            }
+            
+			
+			function visualization(i, color, load){
+				var x = i % NeuronsNumberx;
+				var y = Math.floor(i / NeuronsNumberx);
+				
+				ctx.fillStyle = "black";
+				ctx.fillRect(x * W/NeuronsNumberx, y * H/NeuronsNumbery ,8,8);
+				
+				if(color === "black") {
+					color = "rgba(0,0,255,"+ Math.floor(load/1000 * 100) / 100 +")";
+				}
+				ctx.fillStyle = color;
+				ctx.fillRect(x * W/NeuronsNumberx, y * H/NeuronsNumbery ,8,8);
+	
+			}
+			
+			
+			
+		</script>
+		<script>
+			var pout = document.getElementById("output");
+			
+			function decbin(dec,length){
+			  var out = "";
+			  while(length--)
+				out += (dec >> length ) & 1;    
+			  return out;  
+			}
+			var selectedpixelindex = 1000;
+            
+            dendrite_load = document.createElement('div');
+			axon_terminal_load = document.createElement('div');
+			axon_load = document.createElement('div');
+			axon_load1 = document.createElement('div');
+			axon_load2 = document.createElement('div');
+			axon_load3 = document.createElement('div');
+			axon_load4 = document.createElement('div');
+			axon_load5 = document.createElement('div');
+			threshold = document.createElement('div');
+			max_axon_terminal_load = document.createElement('div');
+
+			document.body.appendChild(dendrite_load);
+			document.body.appendChild(axon_terminal_load);
+			document.body.appendChild(axon_load);
+			document.body.appendChild(axon_load1);
+			document.body.appendChild(axon_load2);
+			document.body.appendChild(axon_load3);
+			document.body.appendChild(axon_load4);
+			document.body.appendChild(axon_load5);
+			document.body.appendChild(threshold);
+			document.body.appendChild(max_axon_terminal_load);
+            
+            function output(){
+				var n = brain.neurons[GLOBAL_mouseindex];
+				var n1 = brain.neurons[GLOBAL_mouseindex+1];
+				var n2 = brain.neurons[GLOBAL_mouseindex+2];
+				var n3 = brain.neurons[GLOBAL_mouseindex+3];
+				var n4 = brain.neurons[GLOBAL_mouseindex+4];
+				var n5 = brain.neurons[GLOBAL_mouseindex+5];
+				
+				dendrite_load.innerText = "Dentrite Load:" + n.dendrite_load;
+				axon_terminal_load.innerText = "Axon Terminal Load:" + n.axon_terminal_load;
+				axon_load.innerText = "Axon Load0:" + decbin(n.axon_load, n.axon_length);
+				axon_load1.innerText = "Axon Load1:" + decbin(n1.axon_load, n1.axon_length);
+				axon_load2.innerText = "Axon Load2:" + decbin(n2.axon_load, n2.axon_length);
+				axon_load3.innerText = "Axon Load3:" + decbin(n3.axon_load, n3.axon_length);
+				axon_load4.innerText = "Axon Load4:" + decbin(n4.axon_load, n4.axon_length);
+				axon_load5.innerText = "Axon Load5:" + decbin(n5.axon_load, n5.axon_length);
+				threshold.innerText = "trshld:" + n.threshold;
+				max_axon_terminal_load.innerText = "max_axon_terminal_load:" + brain.max_axon_terminal_load;
+				
+				//setTimeout(output, 0);
+			};
+            
+            brain.callback = output;
+		</script>
+	</body>
+</html>
