@@ -54,7 +54,8 @@
 		  document.body.appendChild(streamContainer);
 
 		  navigator.getUserMedia({video: true}, function(stream) {
-			self.video.src = window.URL.createObjectURL(stream);
+			//self.video.src = window.URL.createObjectURL(stream);
+			self.video.srcObject = stream;
 			self.video.play();
 			self.update();
 		  }, function(err){
